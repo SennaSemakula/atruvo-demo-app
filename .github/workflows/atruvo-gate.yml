@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   gate:
@@ -48,6 +49,7 @@ jobs:
         continue-on-error: true
 
       - name: Run Atruvo gate
+        id: gate
         run: |
           GATE_ARGS="--format markdown"
           GATE_ARGS="$GATE_ARGS --output /tmp/atruvo-report.md"
@@ -67,7 +69,48 @@ jobs:
             GATE_ARGS="$GATE_ARGS --base-ref origin/$GITHUB_BASE_REF --head-ref HEAD"
           fi
 
+          set +e
           atruvo gate $GATE_ARGS
+          ATRUVO_EXIT=$?
+          set -e
+
+          echo "exit_code=$ATRUVO_EXIT" >> "$GITHUB_OUTPUT"
+          exit $ATRUVO_EXIT
+
+      - name: Post PR comment
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f /tmp/atruvo-report.md ]; then
+            echo "No report file found, skipping comment"
+            exit 0
+          fi
+
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          COMMENT_TAG="<!-- atruvo-gate-report -->"
+
+          # Check for existing comment
+          EXISTING=$(gh api \
+            repos/${{ github.repository }}/issues/${PR_NUMBER}/comments \
+            --jq ".[] | select(.body | startswith(\"${COMMENT_TAG}\")) | .id" \
+            2>/dev/null | head -1)
+
+          BODY="${COMMENT_TAG}
+          $(cat /tmp/atruvo-report.md)"
+
+          if [ -n "$EXISTING" ]; then
+            gh api \
+              repos/${{ github.repository }}/issues/comments/${EXISTING} \
+              -X PATCH \
+              -f body="${BODY}" > /dev/null
+            echo "Updated existing comment ${EXISTING}"
+          else
+            gh api \
+              repos/${{ github.repository }}/issues/${PR_NUMBER}/comments \
+              -f body="${BODY}" > /dev/null
+            echo "Posted new comment"
+          fi
 
       - name: Upload report
         if: always()
