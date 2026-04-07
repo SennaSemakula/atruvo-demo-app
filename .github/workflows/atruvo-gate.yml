@@ -24,16 +24,18 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Install Atruvo
-        env:
-          GH_TOKEN: ${{ secrets.ATRUVO_TOKEN }}
+      - name: Checkout Atruvo
+        uses: actions/checkout@v4
+        with:
+          repository: SennaSemakula/atruvo-delivery-guard
+          token: ${{ secrets.ATRUVO_TOKEN }}
+          path: .atruvo-tool
+
+      - name: Build Atruvo
         run: |
-          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
-          GONOSUMCHECK=github.com/atruvo/* GOFLAGS=-mod=mod \
-            go install github.com/atruvo/atruvo-delivery-guard/cmd/atruvo@main || {
-            echo "::warning::Could not install from private repo, building from vendored source"
-            exit 1
-          }
+          cd .atruvo-tool
+          go build -o /usr/local/bin/atruvo ./cmd/atruvo
+          atruvo --version
 
       - name: Run Trivy scan
         uses: aquasecurity/trivy-action@master
