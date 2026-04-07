@@ -1,0 +1,78 @@
+name: Atruvo AI Delivery Guard
+
+on:
+  pull_request:
+    paths:
+      - '**.yaml'
+      - '**.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Atruvo Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout app repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install Atruvo
+        env:
+          GH_TOKEN: ${{ secrets.ATRUVO_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          GONOSUMCHECK=github.com/atruvo/* GOFLAGS=-mod=mod \
+            go install github.com/atruvo/atruvo-delivery-guard/cmd/atruvo@main || {
+            echo "::warning::Could not install from private repo, building from vendored source"
+            exit 1
+          }
+
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: '/tmp/trivy.sarif.json'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+        continue-on-error: true
+
+      - name: Run Atruvo gate
+        run: |
+          GATE_ARGS="--format markdown"
+          GATE_ARGS="$GATE_ARGS --output /tmp/atruvo-report.md"
+          GATE_ARGS="$GATE_ARGS --json-output /tmp/atruvo-report.json"
+          GATE_ARGS="$GATE_ARGS --env production"
+          GATE_ARGS="$GATE_ARGS --fail-on block"
+
+          # Add SARIF if Trivy produced output
+          [ -f /tmp/trivy.sarif.json ] && GATE_ARGS="$GATE_ARGS --sarif /tmp/trivy.sarif.json"
+
+          # Add local overlay if present
+          [ -f .atruvo/policy.overlay.yaml ] && GATE_ARGS="$GATE_ARGS --local-policy .atruvo/policy.overlay.yaml"
+
+          # Git diff for PR
+          if [ -n "$GITHUB_BASE_REF" ]; then
+            git fetch origin "$GITHUB_BASE_REF" --depth=1 2>/dev/null || true
+            GATE_ARGS="$GATE_ARGS --base-ref origin/$GITHUB_BASE_REF --head-ref HEAD"
+          fi
+
+          atruvo gate $GATE_ARGS
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atruvo-gate-report
+          path: |
+            /tmp/atruvo-report.json
+            /tmp/atruvo-report.md
+          if-no-files-found: ignore

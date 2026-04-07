@@ -1,0 +1,5 @@
+version: 1
+environments:
+  production:
+    pass_max: 14
+    review_max: 39
