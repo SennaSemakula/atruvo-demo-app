@@ -4,10 +4,6 @@ metadata:
   name: web-api
   namespace: production
 spec:
-  tls:
-    - hosts:
-        - api.example.com
-      secretName: api-tls
   rules:
     - host: api.example.com
       http:
